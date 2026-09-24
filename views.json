@@ -1,13 +1,54 @@
 [
   {
-    "name": "week",
-    "title": "This week",
-    "subtitle": "Packhouse for Claude Code: what needs attention, rendered by npm run view",
+    "name": "packhouse-board",
+    "title": "The packhouse board",
+    "subtitle": "Packhouse for Claude Code: what needs a decision, the intake queue, the open consignments and the coolstore. Rendered by npm run view.",
     "sections": [
       {
-        "title": "Needs attention",
-        "note": "TODO(author): point this at the industry's attention view (overdue, stuck, quiet).",
-        "sql": "select 'replace me' as item, 'TODO(author)' as why"
+        "title": "Needs a decision",
+        "note": "Fruit held on a spray window breach outranks everything: it is a legal and market-access problem losing condition on the pad. Then missing diaries, blocked consignments, the coolstore, expired certificates and stale stock.",
+        "sql": "select case reason when 'phi_hold' then 'HELD: picked inside the spray window' when 'spray_diary_missing' then 'No spray diary: grading blocked' when 'assurance_missing' then 'Export blocked: no assurance reference' when 'coolstore_out_of_range' then 'Coolroom OUT OF RANGE' when 'coolstore_quiet' then 'Coolroom check overdue' when 'gap_expired' then 'GAP certificate EXPIRED' when 'gap_expiring' then 'GAP certificate expiring' when 'delivery_ungraded' then 'Fruit waiting on the grader' when 'pallet_aged' then 'Pallet aged in store' when 'consignment_stale' then 'Consignment going stale' when 'pool_unsold' then 'Pool proceeds missing' else reason end as what, label as record, grower, place as at, days, detail from v_attention order by case reason when 'phi_hold' then 1 when 'spray_diary_missing' then 2 when 'assurance_missing' then 3 when 'coolstore_out_of_range' then 4 when 'gap_expired' then 5 when 'delivery_ungraded' then 6 when 'pool_unsold' then 7 when 'pallet_aged' then 8 when 'consignment_stale' then 9 when 'coolstore_quiet' then 10 else 11 end, days desc nulls last"
+      },
+      {
+        "title": "The intake queue",
+        "note": "Received, held or waiting on paperwork. Fruit is condition and condition is money.",
+        "sql": "select ref, grower, orchard as block, coalesce(variety, crop) as variety, to_char(received_on, 'YYYY-MM-DD') as received, bins, kgs as kg, case when spray_diary_received then 'yes' else 'MISSING' end as spray_diary, case when phi_breach then 'BREACH' when phi_clear_on is not null then 'clear' else '' end as spray_window, upper(status) as status, coalesce(hold_reason, '') as hold_reason from v_deliveries where status <> 'graded' order by status desc, received_on"
+      },
+      {
+        "title": "Open consignments",
+        "note": "An export consignment does not dispatch without its assurance reference on record. There is no force flag.",
+        "sql": "select ref, buyer, coalesce(destination, '') as destination, case when export then 'EXPORT' else 'domestic' end as type, case when export and assurance_ref is null then 'MISSING' else coalesce(assurance_ref, '') end as assurance, pallet_count as pallets, trays, growers, to_char(created_on, 'YYYY-MM-DD') as created, days_open from v_consignments where status = 'open' order by created_on"
+      },
+      {
+        "title": "The coolstore",
+        "note": "The temperature record is what the export programme audits. A quiet room is a gap in it.",
+        "sql": "select room, target_min_c || ' to ' || target_max_c || ' C' as band, coalesce(last_temp_c || ' C', '') as last_reading, coalesce(round(hours_since) || 'h ago', 'NEVER') as checked, coalesce(checked_by, '') as by, pallets_in_room as pallets, state from v_coolstore order by case state when 'OUT OF RANGE' then 1 when 'NEVER CHECKED' then 2 when 'QUIET' then 3 else 4 end, room"
+      }
+    ]
+  },
+  {
+    "name": "registers",
+    "title": "The registers",
+    "subtitle": "Packhouse for Claude Code: pallets in store, the pools, grower returns and the GAP register. Rendered by npm run view.",
+    "sections": [
+      {
+        "title": "Pallets in store, oldest first",
+        "sql": "select pallet_no, grade, trays, coalesce(variety, crop) as variety, grower, delivery_ref as from_delivery, to_char(packed_on, 'YYYY-MM-DD') as packed, days_in_store as days, coalesce(room, '') as room, coalesce(consignment_ref, '') as allocated_to from v_pallets where status = 'in_store' order by days_in_store desc, pallet_no"
+      },
+      {
+        "title": "The pools",
+        "note": "Growers are paid from these. A pool with dispatched trays unsold cannot close.",
+        "sql": "select pool, coalesce(variety, crop) as variety, trays_packed as packed, trays_dispatched as dispatched, trays_sold as sold, case when trays_unsold > 0 then trays_unsold::text else '' end as unsold, gross_sales, packing_charge_per_tray as packing_per_tray, levy_per_tray, status from v_pools order by pool"
+      },
+      {
+        "title": "Grower returns at today's numbers",
+        "note": "Pro-rata on trays packed into the pool, less packing charges and levies. An open pool moves with every sale.",
+        "sql": "select pool, grower, trays, gross_share, packing_charges, levies, net_return, net_per_tray from v_grower_returns order by pool, net_return desc"
+      },
+      {
+        "title": "The GAP register",
+        "note": "Export programmes buy from certified blocks. An expired block cannot join an export consignment.",
+        "sql": "select block_code as code, orchard as block, grower, coalesce(region, '') as region, coalesce(variety, crop) as variety, coalesce(hectares::text, '') as ha, coalesce(gap_scheme, 'NONE') as scheme, coalesce(to_char(gap_cert_expires_on, 'YYYY-MM-DD'), '') as cert_expires, gap as status from v_orchards where status = 'active' order by case gap when 'EXPIRED' then 1 when 'expiring' then 2 when 'NONE' then 3 else 4 end, grower"
       }
     ]
   }

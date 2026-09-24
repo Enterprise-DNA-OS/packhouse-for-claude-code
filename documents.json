@@ -1,11 +1,80 @@
 [
   {
-    "name": "example",
-    "title": "TODO(author): the first document this industry must produce",
-    "for_each": "select gen_random_uuid() as id, 'Example' as name",
+    "name": "packout-statement",
+    "title": "Packout statement",
+    "for_each": "select p.run_id as id, (p.delivery_ref || ' ' || p.grower) as name from v_packouts p order by p.graded_on desc",
     "file": "name",
     "sections": [
-      { "title": "Details", "sql": "select 'replace me' as item, $1::text as record_id" }
+      {
+        "title": "The delivery",
+        "note": "What arrived, from which block, and the paperwork that rode with it.",
+        "sql": "select p.delivery_ref as delivery, p.grower, p.orchard as block, d.block_code, coalesce(p.variety, p.crop) as variety, to_char(d.picked_on, 'DD Month YYYY') as picked, to_char(d.received_on, 'DD Month YYYY') as received, d.bins, d.kgs as kg, case when d.spray_diary_received then 'on record' else 'MISSING' end as spray_diary, coalesce(d.maturity_ref, '') as maturity_clearance from v_packouts p join v_deliveries d on d.delivery_id = p.delivery_id where p.run_id = $1"
+      },
+      {
+        "title": "What it graded",
+        "note": "Packout is what survived the reject belt, by weight. Class 1 is the export money.",
+        "sql": "select to_char(p.graded_on, 'DD Month YYYY') as graded, p.input_kg as kg_in, p.class1_trays as class_1_trays, p.class2_trays as class_2_trays, p.reject_kg, p.packout_pct || '%' as packout, p.class1_share_pct || '%' as class_1_share from v_packouts p where p.run_id = $1"
+      },
+      {
+        "title": "The pallets",
+        "sql": "select pl.pallet_no, pl.grade, pl.trays, coalesce(pl.pool, '') as pool, coalesce(pl.room, '') as room, coalesce(pl.consignment_ref, '') as consignment, pl.status from v_pallets pl where pl.grading_run_id = $1 order by pl.pallet_no"
+      }
+    ]
+  },
+  {
+    "name": "grower-return-statement",
+    "title": "Grower return statement",
+    "for_each": "select (r.pool_id::text || ':' || r.grower_id::text) as id, (r.pool || ' ' || r.grower) as name from v_grower_returns r order by r.pool, r.grower",
+    "file": "name",
+    "sections": [
+      {
+        "title": "Your return from this pool",
+        "note": "Pro-rata on trays packed into the pool, less the packing charge and levies. An open pool moves with every sale; the closed pool is final.",
+        "sql": "select r.grower, r.pool, r.pool_status as pool_state, r.trays, r.gross_share, r.packing_charges, r.levies, r.net_return, r.net_per_tray from v_grower_returns r where (r.pool_id::text || ':' || r.grower_id::text) = $1"
+      },
+      {
+        "title": "The pool behind the numbers",
+        "sql": "select p.pool, p.trays_packed as pool_trays_packed, p.trays_sold as pool_trays_sold, p.gross_sales as pool_gross_sales, p.packing_charge_per_tray, p.levy_per_tray, p.status from v_pools p join v_grower_returns r on r.pool_id = p.pool_id where (r.pool_id::text || ':' || r.grower_id::text) = $1"
+      },
+      {
+        "title": "Your fruit in it",
+        "sql": "select pl.pallet_no, pl.grade, pl.trays, pl.delivery_ref as from_delivery, to_char(pl.packed_on, 'YYYY-MM-DD') as packed, pl.status from v_pallets pl join v_grower_returns r on r.pool_id = pl.pool_id and r.grower_id = pl.grower_id where (r.pool_id::text || ':' || r.grower_id::text) = $1 order by pl.pallet_no"
+      }
+    ]
+  },
+  {
+    "name": "consignment-manifest",
+    "title": "Consignment manifest",
+    "for_each": "select c.consignment_id as id, (c.ref || ' ' || c.buyer) as name from v_consignments c where c.pallet_count > 0 order by c.created_on desc",
+    "file": "name",
+    "sections": [
+      {
+        "title": "The consignment",
+        "note": "An export consignment carries its assurance reference or it does not leave.",
+        "sql": "select c.ref, c.buyer, coalesce(c.destination, '') as destination, case when c.export then 'EXPORT' else 'domestic' end as type, case when c.export then coalesce(c.assurance_ref, 'NOT YET ON RECORD') else '' end as assurance_reference, coalesce(c.carrier, '') as carrier, to_char(c.created_on, 'DD Month YYYY') as created, coalesce(to_char(c.dispatched_on, 'DD Month YYYY'), 'not dispatched') as dispatched, c.pallet_count as pallets, c.trays, c.growers from v_consignments c where c.consignment_id = $1"
+      },
+      {
+        "title": "The pallets, each traceable one step back",
+        "note": "Pallet to grading run to delivery to block to grower. The trace the auditor asks for is this table.",
+        "sql": "select pl.pallet_no, pl.grade, pl.trays, coalesce(pl.variety, pl.crop) as variety, pl.grower, pl.orchard as block, d.block_code, pl.delivery_ref as delivery, to_char(d.picked_on, 'YYYY-MM-DD') as picked from v_pallets pl join v_deliveries d on d.ref = pl.delivery_ref where pl.consignment_id = $1 order by pl.pallet_no"
+      }
+    ]
+  },
+  {
+    "name": "coolstore-register",
+    "title": "Coolstore temperature register",
+    "for_each": "select r.id, (r.name || ' temperature register') as name from coolrooms r where r.status = 'active' order by r.name",
+    "file": "name",
+    "sections": [
+      {
+        "title": "The room",
+        "note": "The band is this business's own standard for the fruit in the room. The register below is the audit record.",
+        "sql": "select r.name as room, r.target_min_c || ' to ' || r.target_max_c || ' C' as band, (select count(*) from pallets p where p.room = r.name and p.status = 'in_store') as pallets_in_room, to_char(current_date, 'DD Month YYYY') as printed_on from coolrooms r where r.id = $1"
+      },
+      {
+        "title": "The last 14 days of checks",
+        "sql": "select to_char(t.checked_at, 'YYYY-MM-DD HH24:MI') as checked_at, t.temp_c || ' C' as reading, case when t.temp_c < r.target_min_c or t.temp_c > r.target_max_c then 'OUT OF RANGE' else 'ok' end as state, coalesce(t.checked_by, '') as by, coalesce(t.note, '') as note from temp_checks t join coolrooms r on r.id = t.room_id where t.room_id = $1 and t.checked_at > now() - interval '14 days' order by t.checked_at desc"
+      }
     ]
   }
 ]
